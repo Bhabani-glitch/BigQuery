@@ -1,0 +1,32 @@
+CREATE OR REPLACE FUNCTION `projectid.datasetid.getga4dcg`(source STRING, medium STRING) RETURNS STRING AS (
+CASE
+    WHEN REGEXP_CONTAINS(lower(source),'blog') OR REGEXP_CONTAINS(lower(medium),'blog') THEN 'Blog'
+    WHEN REGEXP_CONTAINS(lower(source),'marketing-cloud') OR REGEXP_CONTAINS(lower(medium),'marketing-cloud') OR REGEXP_CONTAINS(lower(medium),'crm') OR REGEXP_CONTAINS(lower(source),'crm') THEN 'Email'
+    WHEN REGEXP_CONTAINS(lower(source),'crm-05-app-us.veevacrm.com|ongage|(newsletter).*|(email).*|(e-mail).*|(dwemail).*|(speaker_email).*|(sfmc).') OR 
+    REGEXP_CONTAINS(lower(medium),'(newsletter).*|(email).*|(e-mail).*|(dwemail).*|(speaker_email).*|(sfmc).') THEN '3rd Party E-mail'
+    WHEN REGEXP_CONTAINS(lower(source),'(unlinked sa360 account)') OR REGEXP_CONTAINS(lower(medium),'(unlinked sa360 account)') THEN 'Paid Search'
+    WHEN REGEXP_CONTAINS(lower(source),'l.facebook.com|lm.facebook.com|m.facebook.com|facebook.com|linkedin.com|l.instagram.com|reddit.com|instagram.com') AND 
+    REGEXP_CONTAINS(lower(medium),'referral|social') THEN 'Organic Social'
+    WHEN REGEXP_CONTAINS(lower(source),'facebook|linkedin|fb|reddit|instagram') AND 
+    REGEXP_CONTAINS(lower(medium),'social|paid') THEN 'Paid Social'    
+    WHEN REGEXP_CONTAINS(lower(source),'qr_code|qr-code') OR REGEXP_CONTAINS(lower(medium),'qr_code|qr-code') THEN 'QR Code'
+    WHEN REGEXP_CONTAINS(lower(source),'print') OR REGEXP_CONTAINS(lower(medium),'print') THEN 'Print'
+    WHEN REGEXP_CONTAINS(lower(source),'tv_to_text')  THEN 'TV to Text'
+    WHEN REGEXP_CONTAINS(lower(medium),'wallboard')  THEN 'Wallboard'
+    WHEN REGEXP_CONTAINS(lower(medium),'video') OR REGEXP_CONTAINS(lower(source),'youtube.com')  THEN 'Organic Video'
+    WHEN REGEXP_CONTAINS(lower(medium),'tv')  THEN 'TV'
+    WHEN REGEXP_CONTAINS(lower(medium),'display|programmatic|cpm|cpa|custom') OR REGEXP_CONTAINS(lower(source),'display|programmatic') THEN 'Display'
+    WHEN REGEXP_CONTAINS(lower(source),'amazon')  THEN 'Organic Shopping'
+
+    WHEN lower(medium) = 'organic' THEN 'Organic Search'
+    WHEN lower(medium) = 'vanity' THEN 'Vanity'
+    WHEN lower(medium) = 'cpc' THEN 'Paid Search'
+    WHEN lower(medium) = 'social' AND lower(source) = '{{placement}}'  THEN 'Paid Social'
+    WHEN lower(medium) = 'referral' THEN 'Referral'
+    WHEN lower(medium) = 'social' AND lower(source) = 'instagram'  THEN 'Paid Social'
+    WHEN (lower(medium) = 'referral' OR REGEXP_CONTAINS(lower(source),'qr-code-generator.com')) AND (NOT REGEXP_CONTAINS(lower(source),'l.facebook.com|lm.facebook.com|m.facebook.com|facebook.com|linkedin.com|l.instagram.com|reddit.com|instagram.com'))  THEN 'Referral'
+    WHEN (lower(source) = '(direct)' AND lower(medium)= '(none)') OR
+    (lower(source) = '(not set)' AND lower(medium)= '(not set)') THEN 'Direct'
+    ELSE 'Other'
+  END
+);
