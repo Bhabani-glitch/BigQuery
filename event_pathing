@@ -1,0 +1,164 @@
+WITH session_details AS (
+SELECT session_id, event_timestamp,source, medium,operating_system, city,device_category,browser_version, landing_page,default_channel_group, batch_event_index,event_label,PageOrEvent,
+ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY session_id,event_timestamp) AS row_number,
+COUNT(*) OVER (PARTITION BY session_id) AS total_rows,
+FROM(
+SELECT
+    user_pseudo_id  || '.' || (SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id') AS session_id,
+    CAST(TIMESTAMP_MICROS(event_timestamp) AS DATETIME) as event_timestamp,
+    traffic_source.source AS source,
+    device.operating_system,geo.city,
+    traffic_source.medium AS medium,
+    device.category AS device_category,device.browser_version,
+        IFNULL(REGEXP_EXTRACT( (case when (select value.int_value from unnest(event_params) where event_name = 'page_view' and key = 'entrances') = 1 
+          then (select value.string_value from unnest(event_params) where event_name = 'page_view' and key = 'page_location') end) 
+          , r'^https?://[^/]+(/[^?]*)'
+    ),"na") as landing_page,
+    `projectid.datasetid.getga4dcg`(traffic_source.source, traffic_source.medium) AS default_channel_group,
+    batch_event_index,
+      CASE
+        WHEN ep.key = 'page_location' THEN
+          CASE
+            WHEN SPLIT(SPLIT((SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_location'), '.com/')[SAFE_ORDINAL(2)], '?')[SAFE_ORDINAL(1)] = '' THEN '/'
+            ELSE CONCAT('/', SPLIT(SPLIT((SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_location'), '.com/')[SAFE_ORDINAL(2)], '?')[SAFE_ORDINAL(1)])
+          END
+        ELSE ep.value.string_value
+      END PageOrEvent,
+      (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'event_label') AS event_label
+  FROM
+    `project_id.datset_id.events_*`,
+    UNNEST(event_params) AS ep
+  WHERE
+    _TABLE_SUFFIX BETWEEN '20240712' AND '20240731'
+    AND ep.key IN ('page_location', 'event_label')
+    AND lower(geo.country) = 'united states'
+    AND event_name IN ('header_click','header_download','body_click','body_download','footer_click','footer_download','form_engagement',
+    'page_scroll','video_engagement','content_view','dwell_click','dwell_scroll','time_spent','page_view'
+    )
+  GROUP BY ALL
+
+)
+GROUP BY ALL
+),
+
+Landing_Page AS(
+SELECT session_id,landing_page,page_title,
+ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY landing_page) AS row_number,
+COUNT(*) OVER (PARTITION BY session_id) AS total_rows
+from(
+SELECT
+    user_pseudo_id  || '.' || (SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id') AS session_id,
+    REGEXP_EXTRACT( (case when (select value.int_value from unnest(event_params) where event_name = 'page_view' and key = 'entrances') = 1 
+          then (select value.string_value from unnest(event_params) where event_name = 'page_view' and key = 'page_location') end) 
+          , r'^https?://[^/]+(/[^?]*)'
+    )as landing_page,
+    (select value.string_value from unnest(event_params) where event_name = 'page_view' and key = 'page_title') as page_title,
+    FROM 
+    `project_id.dataset_id.events_*`
+      WHERE
+    _TABLE_SUFFIX BETWEEN '20240712' AND '20240731'
+    AND lower(geo.country) = 'united states'
+    AND event_name IN ('header_click','header_download','body_click','body_download','footer_click','footer_download','form_engagement',
+    'global_scroll',
+    'page_scroll','video_engagement','content_view','dwell_click','dwell_scroll','time_spent'
+    ,'page_view'
+    )
+    GROUP BY 1,2,3)
+),
+experiences AS (
+  SELECT
+    DISTINCT session_id AS Session_ID,
+    CASE
+      WHEN posit_1 > posit_2 AND posit_1 > posit_3 AND posit_submit >= posit_1 THEN 'Dynamic 1'
+      WHEN posit_2 > posit_1 AND posit_2 > posit_3 AND posit_submit >= posit_2 THEN 'Dynamic 2'
+      WHEN posit_3 > posit_1 AND posit_3 > posit_2 AND posit_submit >= posit_3 THEN 'Dynamic 3'
+      ELSE 'Not Dynamic'
+    END AS experience
+  FROM (
+    SELECT
+      user_pseudo_id  || '.' || (SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id') AS session_id,
+      MAX(IF(eps.value.string_value = 'AUS--CLICK--TDHOME--OPTION--1', event_timestamp, 1595664801000010)) AS posit_1,
+      MAX(IF(eps.value.string_value = 'AUS--CLICK--TDHOME--OPTION--2', event_timestamp, 1595664801000010)) AS posit_2,
+      MAX(IF(eps.value.string_value = 'AUS--CLICK--TDHOME--OPTION--3', event_timestamp, 1595664801000010)) AS posit_3,
+      MAX(IF(eps.value.string_value = 'AUS--CLICK--TDHOME--SUBMIT', event_timestamp, 1595664801000010)) AS posit_submit
+    FROM
+      `project_id.datset_id.events_*`,
+      UNNEST(event_params) AS eps
+    WHERE
+      _TABLE_SUFFIX BETWEEN '20240712' AND '20240731'
+      AND lower(geo.country) = 'united states'
+      AND event_name IN ('header_click','header_download','body_click','body_download','footer_click','footer_download','form_engagement',
+    'page_scroll','video_engagement','content_view','dwell_click','dwell_scroll','time_spent','page_view'
+    )
+    GROUP BY 1
+  )
+),
+KSA_Details AS(
+  SELECT 
+    sds.session_id, 
+    sds.event_timestamp, 
+    sds.source,
+    sds.medium,  
+    sds.default_channel_group, 
+    sds.landing_page, 
+    sds.batch_event_index, 
+    ksa.KSA as ksa_name,
+    ksa.`KSA abbreviation` AS ksa_abbreviation,
+    ksa.Priority,
+    ksa.start_date,
+    ksa.end_date,
+    'Y' as KSA_available,
+    FROM  
+    teva_web_analytics.ksa_local as ksa
+    JOIN
+    session_details as sds
+    ON sds.event_label = ksa.`event label`
+    AND sds.event_timestamp BETWEEN ksa.start_date AND ksa.end_date
+)
+SELECT Session_ID, source, medium, Channel, landing_page,
+  REGEXP_REPLACE(STRING_AGG(REGEXP_REPLACE(pageOrEvent, r'[^>]*SCROLL--GLOBAL[^>]*', ''), '->' ORDER BY adjusted_row_number),r'(->)+', '->') AS actionChain,max(IS_KSA) as IS_KSA, experience
+FROM(
+SELECT
+  sd.Session_ID as Session_ID,
+  sd.source as Source,
+  sd.medium as Medium,
+  sd.default_channel_group as Channel,
+  sd.pageorEvent,
+  ld.landing_page,
+    CASE
+    WHEN sd.row_number = 1 AND NOT STARTS_WITH(sd.pageorEvent, '/') THEN 2
+    WHEN sd.row_number = 2 AND EXISTS (
+      SELECT 1 FROM session_details s2
+      WHERE s2.session_id = sd.session_id
+      AND sd.row_number = 1
+      AND NOT STARTS_WITH(sd.pageorevent, '/')
+    ) THEN 1
+    ELSE sd.row_number
+  END AS adjusted_row_number,
+  `project_id.datset_id.getga4botseg`(sd.source, sd.medium, sd.landing_page, sd.browser_version,ld.page_title, operating_system, city ) AS bot_seg,
+  e.experience,
+  case when kds.KSA_available = 'Y' then 'Y' ELSE 'N' END AS IS_KSA
+FROM
+  session_details sd
+LEFT JOIN
+  experiences e
+ON
+  sd.Session_ID = e.Session_ID
+LEFT JOIN
+  Landing_Page ld
+ON
+  sd.Session_ID = ld.Session_ID
+LEFT JOIN
+  KSA_Details kds
+ON
+  sd.Session_ID = kds.Session_ID 
+WHERE sd.session_id IS NOT NULL
+AND ld.row_number = (
+    SELECT MAX(row_number) from landing_page lnd
+    where lnd.session_ID = ld.session_ID)
+GROUP BY ALL
+HAVING lower(bot_seg) = 'other'
+ORDER BY experience
+)
+GROUP BY ALL
+ORDER BY experience
