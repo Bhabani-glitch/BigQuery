@@ -1,0 +1,206 @@
+with landing_pages as (
+ 
+select date1,session_id1,landing_page_path
+from(
+select
+PARSE_DATE('%Y%m%d', event_date) AS date1,
+(SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id') || '.' || user_pseudo_id AS session_id1,
+CASE
+WHEN SPLIT(split(( SELECT value.string_value FROM UNNEST(event_params) WHERE event_name = 'session_start' AND KEY = 'page_location'), '.com/')[SAFE_ORDINAL(2)],'?')[SAFE_ORDINAL(1)] = '' THEN '/'
+ELSE
+CONCAT('/',SPLIT(split((SELECT value.string_value FROM UNNEST(event_params) WHERE event_name = 'session_start' AND KEY = 'page_location'),'.com/')[SAFE_ORDINAL(2)],'?')[SAFE_ORDINAL(1)])
+END AS landing_page_path,
+FROM
+    `project_id.dataset_id.table_*`
+WHERE _TABLE_SUFFIX BETWEEN '20240601' AND '20240630'
+)
+where landing_page_path is not null
+group by date1,session_id1,landing_page_path
+ 
+),
+ 
+ 
+all_fields as (
+select  
+page_path,date2,session_id2,user_id2,ga_session_number2,week_of_the_year2,month_of_year2,year2,
+--Calculate Session Custom Channel GROUPING 
+`teva-183208.teva_web_analytics.getga4dcg`(manual_source2, manual_medium2) AS session_custom_channel_grouping2,  
+ 
+ 
+manual_source2,manual_medium2,manual_campaign2,device_category2,page,event_name,Event_Label2,engagement_time_sec2,session_engaged,city,region,country,metro,operating_system2,continent,page_title,browser_version, Campaign_ID,utm_id, utm_keyword, Session_Manual_Term_2,Session_Manual_Term_1,sessionManualAdContent_1,sessionManualAdContent_3
+ 
+from(
+select date2,session_id2,user_id2,ga_session_number2,week_of_the_year2,month_of_year2,year2,
+-- WINDOW OVER session TO get the FIRST instance OF UTM parameters
+      FIRST_VALUE(manual_source2 IGNORE NULLS) OVER (PARTITION BY session_id2 ORDER BY event_timestamp2 RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS manual_source2,
+    -- manual_source2,
+      FIRST_VALUE(manual_medium2 IGNORE NULLS) OVER (PARTITION BY session_id2 ORDER BY event_timestamp2 RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS manual_medium2,
+    -- manual_medium2,
+      FIRST_VALUE(manual_campaign2 IGNORE NULLS) OVER (PARTITION BY session_id2 ORDER BY event_timestamp2 RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS manual_campaign2,
+
+device_category2,
+page,
+page_path,
+event_name,
+Event_Label2,
+engagement_time_sec2,session_engaged,operating_system2,continent,city,region,country,metro,page_title,browser_version,Campaign_ID,utm_id, utm_keyword,
+Session_Manual_Term_2,Session_Manual_Term_1,sessionManualAdContent_1,sessionManualAdContent_3,
+ 
+from(
+select
+PARSE_DATE('%Y%m%d', event_date) AS date2,
+FORMAT_DATE('%V',PARSE_DATE('%Y%m%d',event_date)) AS week_of_the_year2,
+FORMAT_DATE('%Y%m',PARSE_DATE('%Y%m%d',event_date)) AS month_of_year2,
+FORMAT_DATE('%Y',PARSE_DATE('%Y%m%d',event_date)) AS year2,
+(SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id') || '.' || user_pseudo_id AS session_id2,
+ 
+user_pseudo_id as user_id2,
+( SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_number') AS ga_session_number2,
+event_timestamp as event_timestamp2,
+ 
+
+CASE WHEN event_date < "2024-07-17" then collected_traffic_source.manual_source else session_traffic_source_last_click.manual_campaign.`source` end as manual_source2,
+CASE WHEN event_date < "2024-07-17" then collected_traffic_source.manual_medium else session_traffic_source_last_click.manual_campaign.`medium` end as manual_medium2,
+CASE WHEN event_date < "2024-07-17" then traffic_source.name else session_traffic_source_last_click.manual_campaign.`campaign_name` end as manual_campaign2,
+
+session_traffic_source_last_click.manual_campaign.campaign_id AS Campaign_ID,
+--collected_traffic_source.manual_campaign_id as Campaign_ID,
+(SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'utm_id') AS utm_id,
+(SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'utm_keyword') AS utm_keyword,
+(SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'term') AS Session_Manual_Term_2,
+session_traffic_source_last_click.manual_campaign.term as Session_Manual_Term_1,
+session_traffic_source_last_click.manual_campaign.content as sessionManualAdContent_1,
+(SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'content') AS sessionManualAdContent_3,
+
+-- Device fields  
+device.category AS device_category2,
+-- Browser Version
+device.browser_version as browser_version,
+ 
+(SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_location') AS page,
+(SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_title') AS page_title,
+CASE
+WHEN SPLIT(split(( SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_location'), '.com/')[SAFE_ORDINAL(2)],'?')[SAFE_ORDINAL(1)] = '' THEN '/'
+ELSE
+CONCAT('/',SPLIT(split((SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_location'),'.com/')[SAFE_ORDINAL(2)],'?')[SAFE_ORDINAL(1)])
+END
+AS page_path,
+ 
+--engaged session
+(SELECT COALESCE(CAST(value.string_value AS INT64),value.int_value) FROM UNNEST(event_params) WHERE KEY = 'session_engaged') AS session_engaged,
+ 
+-- Get sID  
+(SELECT value.int_value FROM UNNEST(user_properties) WHERE KEY = 'sID') AS sID,
+ 
+--engagement time
+(SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'engagement_time_msec')/1000 AS engagement_time_sec2,
+  
+event_name,
+(SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'event_label') as Event_Label2,
+ 
+device.operating_system as operating_system2,geo.continent AS continent,geo.city as city,geo.country as country,geo.region as region,geo.metro as metro
+ 
+FROM
+    `project_id.dataset_id.table_*`
+WHERE _TABLE_SUFFIX BETWEEN '20240601' AND '20240630'
+)
+)
+WHERE event_name IN ('header_click','header_download','body_click','body_download','footer_click','footer_download','form_engagement',
+    'global_scroll',
+    'page_scroll','video_engagement','content_view','dwell_click','dwell_scroll','time_spent')
+),
+ 
+combined as(
+ 
+select
+landing_page_path,page_path,date2,session_id2,user_id2,ga_session_number2,week_of_the_year2,month_of_year2,year2,
+CASE WHEN lower(session_custom_channel_grouping2) = 'other' THEN 
+    CASE
+      WHEN REGEXP_CONTAINS(lower(manual_campaign2),'usa_go|usa_ma') THEN 'Paid Search'
+      WHEN REGEXP_CONTAINS(lower(manual_campaign2),'organic') THEN 'Organic Search'
+      WHEN REGEXP_CONTAINS(lower(manual_campaign2),'referral') THEN 'Referral'
+      WHEN REGEXP_CONTAINS(lower(manual_campaign2),'direct') THEN 'Direct'
+      WHEN REGEXP_CONTAINS(lower(manual_campaign2),'2024mlt_usa') THEN 'Paid Social'
+      ELSE 'Other' 
+      END
+    ELSE session_custom_channel_grouping2
+  END AS session_custom_channel_grouping2,
+  CASE 
+    WHEN 
+    ((lower(session_custom_channel_grouping2) = 'direct' OR REGEXP_CONTAINS(lower(manual_campaign2),'direct'))
+    AND (((lower(manual_source2) = "(not set)") OR (manual_source2 IS NULL ))
+    AND ((lower(manual_medium2) = "(not set)") OR (manual_medium2 IS NULL)))) THEN '(direct)' 
+    ELSE manual_source2 
+  END AS manual_source2,
+  CASE 
+    WHEN 
+    ((lower(session_custom_channel_grouping2) = 'direct' OR REGEXP_CONTAINS(lower(manual_campaign2),'direct'))
+    AND (((lower(manual_source2) = "(not set)") OR (manual_source2 IS NULL ))
+    AND ((lower(manual_medium2) = "(not set)") OR (manual_medium2 IS NULL)))) THEN '(none)' 
+    ELSE manual_medium2 
+  END AS manual_medium2,
+manual_campaign2,device_category2,page,event_name,Event_Label2,engagement_time_sec2,session_engaged,operating_system2,city,continent,metro,page_title,`teva-183208.teva_web_analytics.getga4botseg`(manual_source2, manual_medium2,landing_page_path, browser_version, page_title, operating_system2, city ) AS bot_seg,region,country,utm_keyword,utm_ID,Campaign_ID,Session_Manual_Term_2,Session_Manual_Term_1,sessionManualAdContent_1,sessionManualAdContent_3
+from
+(
+select * from landing_pages as lp
+full join all_fields as af
+on lp.date1=af.date2
+AND lp.session_id1=af.session_id2
+)
+)
+ 
+select
+--FORMAT_DATE('%Y%m', date2) AS YearMonth,
+date2 as Date,
+manual_source2 as Source,
+manual_medium2 as Medium,
+session_custom_channel_grouping2 as Channel,
+device_category2 as Device_Category,
+city,
+region,
+metro,
+COALESCE(sessionManualAdContent_1, sessionManualAdContent_3) as sessionManualAdContent,
+COALESCE(Session_Manual_Term_1,Session_Manual_Term_2) as Session_Manual_Term,
+utm_keyword,
+utm_ID,
+Campaign_ID,
+manual_campaign2 as Session_Campaign,
+page_path as Page,
+Page_Title,
+landing_page_path as Landing_Page,
+event_label2 as Event_Label,
+Event_Name,
+bot_seg,
+-- case when ga_session_number2=1 then 'new_users' else 'returning_users' end as user_type,
+-- count(event_name) as Total_Event,
+count(event_label2) as Total_Event,
+count(distinct(session_id2)) as Unique_Event,
+from combined
+where 
+-- event_label2 = 'AUS--SCROLL--GLOBAL--25' AND
+-- event_label2 <> "AUS--CLICK-HDFINANCIALSUPPORT--ENROLLNOW" AND
+country = 'United States'
+AND lower(combined.bot_seg) = 'other'
+ 
+group by
+landing_page_path,
+page_path,
+date2,
+device_category,
+city,
+region,
+metro,
+channel,
+source,
+manual_medium2,
+session_campaign,
+session_manual_term,
+sessionManualAdContent,
+event_name,
+event_label2,
+-- user_type,
+page_title,
+utm_keyword,
+utm_ID,
+campaign_ID,
+bot_seg
