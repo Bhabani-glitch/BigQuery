@@ -1,0 +1,25 @@
+SELECT date, count(distinct session_id) as Sessions, sum(views) as Page_views, COUNT(DISTINCT user_pseudo_id) AS users,
+countif(user_type = 'New User') as new_users,round(sum(engagement_time_seconds),3) as engagement_time_seconds,
+sum(session_start) as session_start,sum(distinct engaged_sessions) as engaged_sessions
+FROM(
+SELECT
+  DATE(TIMESTAMP_MICROS(event_timestamp)) AS date,
+  (SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id') || '.' || user_pseudo_id AS session_id,
+  SUM(CASE WHEN event_name = 'page_view' THEN 1 ELSE 0 END) AS views,
+  user_pseudo_id,
+  CASE WHEN event_name = 'session_start' Then (Case when (SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_number') = 1 Then 'New User' ELSE NULL END ) ELSE NULL
+  END AS user_type,
+      (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'engagement_time_msec')/1000 AS engagement_time_seconds,
+      COUNTIF(event_name = 'session_start') as session_start,
+            count(distinct case when (select value.string_value from unnest(event_params) where key = 'session_engaged') = '1' then(select value.int_value from unnest(event_params) where key = 'ga_session_id') end) as engaged_sessions
+FROM
+  `projectid.datasetid.events_*`
+WHERE _TABLE_SUFFIX BETWEEN '20240901' AND '20240905'
+GROUP BY
+  date, session_id, event_name,event_params,user_pseudo_id
+ORDER BY
+  date
+)
+group by 1
+-- , ga_session_number
+order by 1
